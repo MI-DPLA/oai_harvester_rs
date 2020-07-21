@@ -6,14 +6,21 @@ fn main() {
     let request = client.get("https://quod.lib.umich.edu/cgi/o/oai/oai?verb=ListRecords&metadataPrefix=oai_dc&set=dlps%3Aherb00ic");
     let result = client.execute(request.build().unwrap()).unwrap().text().unwrap();
     let re = regex::Regex::new(r"resumptionToken.*>(.*)</resumptionToken").unwrap();
-    let captures = re.captures(&result).unwrap();
-    let resumption_token = captures.get(1);
-    match resumption_token {
-        Some(token) => {
-            fetch_results(token.as_str().to_owned(), now)
+    let captures_opt = re.captures(&result);
+    match captures_opt {
+        Some(captures) => {
+            let resumption_token = captures.get(1);
+            match resumption_token {
+                Some(token) => {
+                    fetch_results(token.as_str().to_owned(), now)
+                },
+                None => {
+                    println!("done1!")
+                }
+            };
         },
         None => {
-            println!("done1!")
+            println!("done!")
         }
     };
 }
