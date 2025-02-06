@@ -3,7 +3,7 @@ use std::time::Instant;
 fn main() {
     let now = Instant::now();
     let client = reqwest::Client::new();
-    let request = client.get("https://quod.lib.umich.edu/cgi/o/oai/oai?verb=ListRecords&metadataPrefix=oai_dc&set=dlps%3Aherb00ic");
+    let request = client.get("https://<SERVER>/oai?verb=ListRecords&metadataPrefix=<PREFIX>&set=<SET>");
     let result = client.execute(request.build().unwrap()).unwrap().text().unwrap();
     let re = regex::Regex::new(r"resumptionToken.*>(.*)</resumptionToken").unwrap();
     let captures_opt = re.captures(&result);
@@ -27,7 +27,7 @@ fn main() {
 
 fn fetch_results(resumption_token: String, now: Instant) {
     println!("{} fetching for token: {}", now.elapsed().as_secs(), resumption_token);
-    let result = reqwest::get(&format!("https://quod.lib.umich.edu/cgi/o/oai/oai?verb=ListRecords&resumptionToken={}", urlencoding::encode(&resumption_token))).unwrap().text().unwrap();
+    let result = reqwest::get(&format!("https://<SERVER>/oai?verb=ListRecords&resumptionToken={}", urlencoding::encode(&resumption_token))).unwrap().text().unwrap();
     //println!("{}", result);
     let re = regex::Regex::new(r"resumptionToken.*>(.*)</resumptionToken").unwrap();
     let captures = re.captures(&result);
