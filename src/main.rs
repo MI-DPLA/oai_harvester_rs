@@ -27,7 +27,13 @@ enum Verb {
     /// List metadata formats available from this repository
     ListMetadataFormats,
     /// Get all records specified by metadataPrefix and, optionally, set
-    ListRecords { metadata_prefix: String, set: Option<String> },
+    ListRecords {
+        metadata_prefix: String,
+        #[arg(short, long)]
+        set: Option<String>,
+        #[arg(short, long)]
+        from: Option<String>
+    },
     /// Get the set structure of this repository
     ListSets,
 }
@@ -38,18 +44,25 @@ fn main() {
     // https://www.sifet.org/bollettino/index.php/bollettinosifet/oai
     let repository = args.repository;
     let write = args.write;
-    let client = Client::new();
+    let client = Client::builder()
+        .timeout(None)
+        .build()
+        .unwrap();
+
     match &args.verb {
         Verb::ListMetadataFormats => {
             println!("Listing metadata formats available from {}", repository);
             get_metadata_formats(client, repository, write);
         },
-        Verb::ListRecords { metadata_prefix, set } => {
-            println!("Harvesting records from {} using prefix {} from {}", repository, metadata_prefix, match set {
+        Verb::ListRecords { metadata_prefix, set, from } => {
+            println!("Harvesting records from {} using prefix {} from {}{}", repository, metadata_prefix, match set {
                 Some(s) => format!("set {}", s),
                 None => "all sets".to_string(),
+            }, match from {
+                Some(s) => format!(" starting from date {}", s),
+                None => "".to_string(),
             });
-            get_records(client, repository, metadata_prefix, set, write);
+            get_records(client, repository, metadata_prefix, set, from, write);
         },
         Verb::ListSets => {
             println!("Listing sets available from {}", repository);
@@ -80,11 +93,14 @@ fn get_sets(client: Client, repository: IriString, write: bool) {
         write_result("sets.xml", &result);
     }
 }
-fn get_records(client: Client, repository: IriString, prefix: &String, set: &Option<String>, write: bool) {
+fn get_records(client: Client, repository: IriString, prefix: &String, set: &Option<String>, from: &Option<String>, write: bool) {
     let now = Instant::now();
     let request_base = format!("{}?verb=ListRecords", repository.to_string());
-    let request_target = format!("{}&metadataPrefix={}{}", request_base, prefix, match set {
+    let request_target = format!("{}&metadataPrefix={}{}{}", request_base, prefix, match set {
         Some(s) => format!("&set={}", s),
+        None => "".to_string(),
+    }, match from {
+        Some(s) => format!("&from={}", s),
         None => "".to_string(),
     });
     let request = client.get(request_target);
@@ -93,6 +109,7 @@ fn get_records(client: Client, repository: IriString, prefix: &String, set: &Opt
         Some(s) => s,
         None => "all",
     });
+    // println!("{:?}", result);
     if write {
         let filename = format!("{}-0.xml", base_filename);
         write_result(&filename, &result);
