@@ -34,19 +34,25 @@ enum Verb {
 
 fn main() {
     let args = Args::parse();
-    println!("args: {:?}", args);
+    // println!("args: {:?}", args);
     // https://www.sifet.org/bollettino/index.php/bollettinosifet/oai
     let repository = args.repository;
     let write = args.write;
     let client = Client::new();
     match &args.verb {
         Verb::ListMetadataFormats => {
+            println!("Listing metadata formats available from {}", repository);
             get_metadata_formats(client, repository, write);
         },
         Verb::ListRecords { metadata_prefix, set } => {
+            println!("Harvesting records from {} using prefix {} from {}", repository, metadata_prefix, match set {
+                Some(s) => format!("set {}", s),
+                None => "all sets".to_string(),
+            });
             get_records(client, repository, metadata_prefix, set, write);
         },
         Verb::ListSets => {
+            println!("Listing sets available from {}", repository);
             get_sets(client, repository, write);
         },
     };
