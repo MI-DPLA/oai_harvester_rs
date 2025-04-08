@@ -46,7 +46,7 @@ enum Verb {
     },
 }
 
-fn main() {
+fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     // println!("args: {:?}", args);
     // https://www.sifet.org/bollettino/index.php/bollettinosifet/oai
@@ -60,7 +60,7 @@ fn main() {
     match &args.verb {
         Verb::ListMetadataFormats => {
             println!("Listing metadata formats available from {}", repository);
-            get_metadata_formats(client, repository, write);
+            get_metadata_formats(client, repository, write)?;
         },
         Verb::ListRecords { metadata_prefix, set, from, until } => {
             println!("Harvesting records from {} using prefix {} from {}{}{}", repository, metadata_prefix, match set {
@@ -73,16 +73,17 @@ fn main() {
                 Some(s) => format!(" until date {}", s),
                 None => "".to_string(),
             });
-            get_records(client, repository, metadata_prefix, set, from, until, write);
+            get_records(client, repository, metadata_prefix, set, from, until, write)?;
         },
         Verb::ListSets => {
             println!("Listing sets available from {}", repository);
-            get_sets(client, repository, write);
+            get_sets(client, repository, write)?;
         },
         Verb::TestXpath { infile } => {
-            test_xpath(infile);
+            test_xpath(infile)?;
         },
     };
+    Ok(())
 }
 
 fn test_xpath(infile: &PathBuf) -> Result<(), anyhow::Error> {
@@ -125,27 +126,29 @@ fn get_xpath(input_xml: &str, xpath: &str) -> Result<Option<String>, anyhow::Err
     Ok(result)
 }
 
-fn write_result(filepath: &str, result: &str) {
+fn write_result(filepath: &str, result: &str) -> anyhow::Result<()> {
     let path: PathBuf = PathBuf::from(filepath);
-    fs::write(path.as_path(), result);
+    Ok(fs::write(path.as_path(), result)?)
 }
 
-fn get_metadata_formats(client: Client, repository: IriString, write: bool) {
+fn get_metadata_formats(client: Client, repository: IriString, write: bool) -> anyhow::Result<()> {
     let request_target = format!("{}?verb=ListMetadataFormats", repository.to_string());
     let request = client.get(request_target);
     let result = client.execute(request.build().unwrap()).unwrap().text().unwrap();
     if write {
-        write_result("formats.xml", &result);
-    }
+        write_result("formats.xml", &result)?;
+    };
+    Ok(())
 }
 
-fn get_sets(client: Client, repository: IriString, write: bool) {
+fn get_sets(client: Client, repository: IriString, write: bool) -> anyhow::Result<()> {
     let request_target = format!("{}?verb=ListSets", repository.to_string());
     let request = client.get(request_target);
     let result = client.execute(request.build().unwrap()).unwrap().text().unwrap();
     if write {
-        write_result("sets.xml", &result);
-    }
+        write_result("sets.xml", &result)?;
+    };
+    Ok(())
 }
 fn get_records(client: Client, repository: IriString, prefix: &String, set: &Option<String>, from: &Option<String>, until: &Option<String>, write: bool) -> anyhow::Result<()> {
     let now = Instant::now();
@@ -169,7 +172,7 @@ fn get_records(client: Client, repository: IriString, prefix: &String, set: &Opt
     // println!("{:?}", result);
     if write {
         let filename = format!("{}-0.xml", base_filename);
-        write_result(&filename, &result);
+        write_result(&filename, &result)?;
     }
 
     let resumption_token = get_xpath(&result, "//resumptionToken");
@@ -187,8 +190,7 @@ fn get_records(client: Client, repository: IriString, prefix: &String, set: &Opt
             println!("{:?}", e);
             return Ok(());
         },
-    };
-    Ok(())
+    }
 }
 
 fn fetch_results(client: &Client, request_base: &str, resumption_token: &str, now: Instant, write: bool, base_filename: &str) -> anyhow::Result<()> {
@@ -199,7 +201,7 @@ fn fetch_results(client: &Client, request_base: &str, resumption_token: &str, no
     //println!("{}", result);
     if write {
         let filename = format!("{}-{}.xml", base_filename, elapsed.to_string());
-        write_result(&filename, &result);
+        write_result(&filename, &result)?;
     }
     let resumption_token = get_xpath(&result, "//resumptionToken");
     match resumption_token {
@@ -216,6 +218,5 @@ fn fetch_results(client: &Client, request_base: &str, resumption_token: &str, no
             println!("{:?}", e);
             return Ok(());
         },
-    };
-    Ok(())
+    }
 }
