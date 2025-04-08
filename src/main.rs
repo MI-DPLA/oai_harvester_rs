@@ -5,7 +5,7 @@ use std::io::prelude::*;
 use std::io::BufReader;
 use std::path::PathBuf;
 use reqwest::blocking::Client;
-use xee_xpath::{Documents, Itemable, Queries, Query};
+use xee_xpath::{Documents, Itemable, Queries, Query, Sequence};
 use xee_xpath::context::{StaticContextBuilder};
 use clap::{Parser, Subcommand};
 use iri_string::types::{IriString};
@@ -91,6 +91,12 @@ fn test_xpath(infile: &PathBuf) -> Result<(), anyhow::Error> {
     let mut input_xml = String::new();
     reader.read_to_string(&mut input_xml)?;
 
+    let resumption_token = get_xpath(&input_xml, "//resumptionToken")?;
+    println!("{:?}", resumption_token);
+    Ok(())
+}
+
+fn get_xpath(input_xml: &str, xpath: &str) -> Result<Option<String>, anyhow::Error> {
     let mut documents = Documents::new();
     let doc = documents.add_string_without_uri(&input_xml)?;
 
@@ -98,34 +104,25 @@ fn test_xpath(infile: &PathBuf) -> Result<(), anyhow::Error> {
     static_context_builder.default_element_namespace("http://www.openarchives.org/OAI/2.0/");
 
     let queries = Queries::new(static_context_builder);
-    println!("{:?}", queries);
 
-    let xpath = "//resumptionToken";
-    let sequence_query = queries.sequence(xpath);
-    let sequence_query = match sequence_query {
-        Ok(sequence_query) => sequence_query,
-        Err(e) => {
-            println!("{:?}", e);
-            return Ok(());
-        }
-    };
+    let sequence_query = queries.sequence(xpath)?;
     let mut context_builder = sequence_query.dynamic_context_builder(&documents);
     context_builder.context_item(doc.to_item(&documents)?);
     let context = context_builder.build();
 
-    let sequence = sequence_query.execute_with_context(&mut documents, &context);
-    let sequence = match sequence {
-        Ok(sequence) => sequence,
-        Err(e) => {
-            println!("{:?}", e);
-            return Ok(());
-        }
+    let sequence = sequence_query.execute_with_context(&mut documents, &context)?;
+    let result = match sequence {
+        Sequence::Empty(_) => None,
+        something => {
+            let s = something.string_value(documents.xot())?;
+            if s.is_empty() {
+                None
+            } else {
+                Some(s)
+            }
+        },
     };
-    println!(
-        "{}",
-        sequence.display_representation(documents.xot(), &context)
-    );
-    Ok(())
+    Ok(result)
 }
 
 fn write_result(filepath: &str, result: &str) {
@@ -150,7 +147,7 @@ fn get_sets(client: Client, repository: IriString, write: bool) {
         write_result("sets.xml", &result);
     }
 }
-fn get_records(client: Client, repository: IriString, prefix: &String, set: &Option<String>, from: &Option<String>, until: &Option<String>, write: bool) {
+fn get_records(client: Client, repository: IriString, prefix: &String, set: &Option<String>, from: &Option<String>, until: &Option<String>, write: bool) -> anyhow::Result<()> {
     let now = Instant::now();
     let request_base = format!("{}?verb=ListRecords", repository.to_string());
     let request_target = format!("{}&metadataPrefix={}{}{}{}", request_base, prefix, match set {
@@ -175,28 +172,26 @@ fn get_records(client: Client, repository: IriString, prefix: &String, set: &Opt
         write_result(&filename, &result);
     }
 
-
-    let re = regex::Regex::new(r"resumptionToken.*>(.*)</resumptionToken").unwrap();
-    let captures_opt = re.captures(&result);
-    match captures_opt {
-        Some(captures) => {
-            let resumption_token = captures.get(1);
-            match resumption_token {
-                Some(token) => {
-                    fetch_results(client, request_base, token.as_str().to_owned(), now, write, &base_filename)
-                },
+    let resumption_token = get_xpath(&result, "//resumptionToken");
+    match resumption_token {
+        Ok(token_opt) => {
+            match token_opt {
+                Some(token) => fetch_results(&client, &request_base, &token, now, write, &base_filename),
                 None => {
-                    println!("done1!")
+                    println!("done! (no resumption token)");
+                    return Ok(());
                 }
-            };
+            }
         },
-        None => {
-            println!("done!")
-        }
+        Err(e) => {
+            println!("{:?}", e);
+            return Ok(());
+        },
     };
+    Ok(())
 }
 
-fn fetch_results(client: Client, request_base: String, resumption_token: String, now: Instant, write: bool, base_filename: &str) {
+fn fetch_results(client: &Client, request_base: &str, resumption_token: &str, now: Instant, write: bool, base_filename: &str) -> anyhow::Result<()> {
     let elapsed = now.elapsed().as_secs();
     println!("{} fetching for token: {}", elapsed, resumption_token);
     let request = client.get(&format!("{}&resumptionToken={}", request_base, urlencoding::encode(&resumption_token)));
@@ -206,23 +201,21 @@ fn fetch_results(client: Client, request_base: String, resumption_token: String,
         let filename = format!("{}-{}.xml", base_filename, elapsed.to_string());
         write_result(&filename, &result);
     }
-    let re = regex::Regex::new(r"resumptionToken.*>(.*)</resumptionToken").unwrap();
-    let captures = re.captures(&result);
-    //println!("{:?}", captures);
-    match captures {
-        Some(c) => {
-            let token = c.get(1);
-            match token {
-                Some(t) => {
-                    fetch_results(client, request_base, t.as_str().to_owned(), now, write, base_filename)
-                },
+    let resumption_token = get_xpath(&result, "//resumptionToken");
+    match resumption_token {
+        Ok(token_opt) => {
+            match token_opt {
+                Some(token) => fetch_results(&client, &request_base, &token, now, write, &base_filename),
                 None => {
-                    println!("done2!")
+                    println!("done! (no resumption token)");
+                    return Ok(());
                 }
             }
         },
-        None => {
-            println!("done3!")
-        }
-    }
+        Err(e) => {
+            println!("{:?}", e);
+            return Ok(());
+        },
+    };
+    Ok(())
 }
