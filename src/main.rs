@@ -43,7 +43,9 @@ enum Verb {
     ListSets,
     TestXpath {
         infile: PathBuf,
+        xpath: String,
     },
+    TestResponse,
 }
 
 fn main() -> anyhow::Result<()> {
@@ -79,21 +81,24 @@ fn main() -> anyhow::Result<()> {
             println!("Listing sets available from {}", repository);
             get_sets(client, repository, write)?;
         },
-        Verb::TestXpath { infile } => {
-            test_xpath(infile)?;
+        Verb::TestXpath { infile, xpath } => {
+            test_xpath(infile, xpath)?;
+        },
+        Verb::TestResponse => {
+            test_response(client, repository)?;
         },
     };
     Ok(())
 }
 
-fn test_xpath(infile: &PathBuf) -> Result<(), anyhow::Error> {
+fn test_xpath(infile: &PathBuf, xpath: &str) -> Result<(), anyhow::Error> {
     let mut reader: Box<dyn BufRead> = Box::new(BufReader::new(File::open(infile)?));
 
     let mut input_xml = String::new();
     reader.read_to_string(&mut input_xml)?;
 
-    let resumption_token = get_xpath(&input_xml, "//resumptionToken")?;
-    println!("{:?}", resumption_token);
+    let result = get_xpath(&input_xml, xpath)?;
+    println!("{:?}", result);
     Ok(())
 }
 
@@ -150,6 +155,18 @@ fn get_sets(client: Client, repository: IriString, write: bool) -> anyhow::Resul
     };
     Ok(())
 }
+
+fn test_response(client: Client, repository: IriString) -> anyhow::Result<()> {
+    let request = client.get(format!("{}", repository.to_string()));
+    let response = client.execute(request.build()?)?;
+    if response.status().is_success() {
+        return Ok(())
+    } else {
+        println!("error: {:?}", response.status());
+    }
+    Ok(())
+}
+
 fn get_records(client: Client, repository: IriString, prefix: &String, set: &Option<String>, from: &Option<String>, until: &Option<String>, write: bool) -> anyhow::Result<()> {
     let now = Instant::now();
     let request_base = format!("{}?verb=ListRecords", repository.to_string());
