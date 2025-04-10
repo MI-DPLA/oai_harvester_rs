@@ -1,4 +1,5 @@
 use std::time::Instant;
+use std::fmt;
 use std::fs;
 use std::fs::File;
 use std::io::prelude::*;
@@ -48,6 +49,79 @@ enum Verb {
     TestResponse,
 }
 
+struct Harvest {
+    repository: IriString,
+    metadata_prefix: String,
+    set: Option<String>,
+    from: Option<String>,
+    until: Option<String>,
+    last_record_date: Option<String>,
+}
+
+impl Harvest {
+    fn request_base(&self) -> String {
+        format!("{}?verb=ListRecords", self.repository.to_string())
+    }
+
+    fn request_url(&self) -> String {
+        format!("{}&metadataPrefix={}{}{}{}", self.request_base(), &self.metadata_prefix, match &self.set {
+            Some(s) => format!("&set={}", s),
+            None => "".to_string(),
+        }, match &self.from {
+            Some(s) => format!("&from={}", s),
+            None => "".to_string(),
+        }, match &self.until {
+            Some(s) => format!("&until={}", s),
+            None => "".to_string(),
+        })
+    }
+
+    fn base_filename(&self) -> String {
+        format!("{}-{}", &self.metadata_prefix, match &self.set {
+            Some(s) => s,
+            None => "all",
+        })
+    }
+
+    fn filename(&self, file_id: String) -> String {
+        format!("{}-{}.xml", &self.base_filename(), file_id)
+    }
+}
+
+impl fmt::Display for Harvest {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "Harvesting records from {} using prefix {} from {}{}{}{}",
+                 &self.repository,
+                 &self.metadata_prefix,
+                 match &self.set {
+                    Some(s) => format!("set {}", s),
+                    None => "all sets".to_string(),
+                }, match &self.from {
+                    Some(s) => format!(" starting from date {}", s),
+                    None => "".to_string(),
+                }, match &self.until {
+                    Some(s) => format!(" until date {}", s),
+                    None => "".to_string(),
+                }, match &self.last_record_date {
+                    Some(s) => format!(" (last record harvested was from date {})", s),
+                    None => "".to_string(),
+                })
+    }
+}
+
+impl fmt::Debug for Harvest {
+    fn fmt(&self, fmt: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt.debug_struct("Harvest")
+            .field("repository", &self.repository)
+            .field("metadata_prefix", &self.metadata_prefix)
+            .field("set", &self.set)
+            .field("from", &self.from)
+            .field("until", &self.until)
+            .field("last_record_date", &self.last_record_date)
+            .finish()
+    }
+}
+
 fn main() -> anyhow::Result<()> {
     let args = Args::parse();
     // println!("args: {:?}", args);
@@ -65,17 +139,16 @@ fn main() -> anyhow::Result<()> {
             get_metadata_formats(client, repository, write)?;
         },
         Verb::ListRecords { metadata_prefix, set, from, until } => {
-            println!("Harvesting records from {} using prefix {} from {}{}{}", repository, metadata_prefix, match set {
-                Some(s) => format!("set {}", s),
-                None => "all sets".to_string(),
-            }, match from {
-                Some(s) => format!(" starting from date {}", s),
-                None => "".to_string(),
-            }, match until {
-                Some(s) => format!(" until date {}", s),
-                None => "".to_string(),
-            });
-            get_records(client, repository, metadata_prefix, set, from, until, write)?;
+            let harvest = Harvest {
+                repository: repository.clone(),
+                metadata_prefix: metadata_prefix.clone(),
+                set: set.clone(),
+                from: from.clone(),
+                until: until.clone(),
+                last_record_date: None,
+            };
+            println!("{}", harvest);
+            get_records(client, harvest, write)?;
         },
         Verb::ListSets => {
             println!("Listing sets available from {}", repository);
@@ -100,10 +173,23 @@ fn test_resume(infile: &PathBuf, client: Client, repository: IriString, prefix: 
     let last_record_date = get_xpath(&input_xml, "//record[last()]//datestamp")?;
     println!("{:?}", last_record_date);
 
+    let harvest = Harvest {
+        repository: repository.clone(),
+        metadata_prefix: prefix.clone(),
+        set: set.clone(),
+        from: None,
+        until: until.clone(),
+        last_record_date: None,
+    };
+
     match last_record_date {
         Some(from) => {
             println!("Resuming from date {}", from);
-            return get_records(client, repository, prefix, set, &Some(from), until, write);
+            let harvest2 = Harvest {
+                from: Some(from.clone()),
+                ..harvest
+            };
+            return get_records(client, harvest2, write);
         },
         None => println!("no last record date found; not continuing"),
     };
@@ -186,28 +272,13 @@ fn test_response(client: Client, repository: IriString) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn get_records(client: Client, repository: IriString, prefix: &String, set: &Option<String>, from: &Option<String>, until: &Option<String>, write: bool) -> anyhow::Result<()> {
+fn get_records(client: Client, harvest: Harvest, write: bool) -> anyhow::Result<()> {
     let now = Instant::now();
-    let request_base = format!("{}?verb=ListRecords", repository.to_string());
-    let request_target = format!("{}&metadataPrefix={}{}{}{}", request_base, prefix, match set {
-        Some(s) => format!("&set={}", s),
-        None => "".to_string(),
-    }, match from {
-        Some(s) => format!("&from={}", s),
-        None => "".to_string(),
-    }, match until {
-        Some(s) => format!("&until={}", s),
-        None => "".to_string(),
-    });
-    let request = client.get(request_target);
+    let request = client.get(harvest.request_url());
     let result = client.execute(request.build().unwrap()).unwrap().text().unwrap();
-    let base_filename = format!("{}-{}", prefix, match set {
-        Some(s) => s,
-        None => "all",
-    });
     // println!("{:?}", result);
     if write {
-        let filename = format!("{}-0.xml", base_filename);
+        let filename = harvest.filename("0".to_string());
         write_result(&filename, &result)?;
     }
 
@@ -215,7 +286,7 @@ fn get_records(client: Client, repository: IriString, prefix: &String, set: &Opt
     match resumption_token {
         Ok(token_opt) => {
             match token_opt {
-                Some(token) => fetch_results(&client, &request_base, &token, now, write, &base_filename),
+                Some(token) => fetch_results(&client, &harvest.request_base(), &token, now, write, &harvest.base_filename()),
                 None => {
                     println!("done! (no resumption token)");
                     return Ok(());
