@@ -76,15 +76,18 @@ impl Harvest {
         })
     }
 
-    fn base_filename(&self) -> String {
-        format!("{}-{}", &self.metadata_prefix, match &self.set {
-            Some(s) => s,
-            None => "all",
-        })
+    fn resumption_url(&self, resumption_token: &str) -> String {
+        format!("{}&resumptionToken={}", &self.request_base(), urlencoding::encode(&resumption_token))
     }
 
     fn filename(&self, file_id: String) -> String {
-        format!("{}-{}.xml", &self.base_filename(), file_id)
+        let base_filename = format!("{}-{}",
+                                    &self.metadata_prefix,
+                                    match &self.set {
+                                        Some(s) => s,
+                                        None => "all",
+                                    });
+        format!("{}-{}.xml", base_filename, file_id)
     }
 }
 
@@ -160,38 +163,6 @@ fn main() -> anyhow::Result<()> {
         Verb::TestResponse => {
             test_response(client, repository)?;
         },
-    };
-    Ok(())
-}
-
-fn test_resume(infile: &PathBuf, client: Client, repository: IriString, prefix: &String, set: &Option<String>, until: &Option<String>, write: bool) -> Result<(), anyhow::Error> {
-    let mut reader: Box<dyn BufRead> = Box::new(BufReader::new(File::open(infile)?));
-
-    let mut input_xml = String::new();
-    reader.read_to_string(&mut input_xml)?;
-
-    let last_record_date = get_xpath(&input_xml, "//record[last()]//datestamp")?;
-    println!("{:?}", last_record_date);
-
-    let harvest = Harvest {
-        repository: repository.clone(),
-        metadata_prefix: prefix.clone(),
-        set: set.clone(),
-        from: None,
-        until: until.clone(),
-        last_record_date: None,
-    };
-
-    match last_record_date {
-        Some(from) => {
-            println!("Resuming from date {}", from);
-            let harvest2 = Harvest {
-                from: Some(from.clone()),
-                ..harvest
-            };
-            return get_records(client, harvest2, write);
-        },
-        None => println!("no last record date found; not continuing"),
     };
     Ok(())
 }
@@ -272,21 +243,14 @@ fn test_response(client: Client, repository: IriString) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn get_records(client: Client, harvest: Harvest, write: bool) -> anyhow::Result<()> {
-    let now = Instant::now();
-    let request = client.get(harvest.request_url());
-    let result = client.execute(request.build().unwrap()).unwrap().text().unwrap();
-    // println!("{:?}", result);
-    if write {
-        let filename = harvest.filename("0".to_string());
-        write_result(&filename, &result)?;
-    }
-
-    let resumption_token = get_xpath(&result, "//resumptionToken");
+fn handle_resumption(client: &Client, result_text: &str, now: Instant, write: bool, harvest: Harvest) -> anyhow::Result<()> {
+    let resumption_token = get_xpath(&result_text, "//resumptionToken");
     match resumption_token {
         Ok(token_opt) => {
             match token_opt {
-                Some(token) => fetch_results(&client, &harvest.request_base(), &token, now, write, &harvest.base_filename()),
+                Some(token) => {
+                    fetch_results(&client, &token, now, write, harvest)?;
+                },
                 None => {
                     println!("done! (no resumption token)");
                     return Ok(());
@@ -297,41 +261,66 @@ fn get_records(client: Client, harvest: Harvest, write: bool) -> anyhow::Result<
             println!("{:?}", e);
             return Ok(());
         },
-    }
+    };
+    Ok(())
 }
 
-fn fetch_results(client: &Client, request_base: &str, resumption_token: &str, now: Instant, write: bool, base_filename: &str) -> anyhow::Result<()> {
+fn get_records(client: Client, harvest: Harvest, write: bool) -> anyhow::Result<()> {
+    let now = Instant::now();
+    let request = client.get(harvest.request_url());
+    let result = client.execute(request.build().unwrap()).unwrap().text().unwrap();
+    // println!("{:?}", result);
+    if write {
+        let filename = harvest.filename("0".to_string());
+        write_result(&filename, &result)?;
+    }
+    let last_record_date = get_xpath(&result, "//record[last()]//datestamp")?;
+    match last_record_date {
+        Some(from) => {
+            let new_harvest = Harvest {
+                from: Some(from.clone()),
+                ..harvest
+            };
+            return handle_resumption(&client, &result, now, write, new_harvest);
+        },
+        None => println!("no last record date found; not continuing"),
+    };
+    Ok(())
+}
+
+fn fetch_results(client: &Client, resumption_token: &str, now: Instant, write: bool, harvest: Harvest) -> anyhow::Result<()> {
     let elapsed = now.elapsed().as_secs();
     println!("{} fetching for token: {}", elapsed, resumption_token);
-    let request = client.get(&format!("{}&resumptionToken={}", request_base, urlencoding::encode(&resumption_token))).build()?;
+
+    let request = client.get(&harvest.resumption_url(resumption_token)).build()?;
     let response = client.execute(request)?;
     if response.status().is_success() {
         let result = response.text()?;
         //println!("{}", result);
         if write {
-            let filename = format!("{}-{}.xml", base_filename, elapsed.to_string());
-            write_result(&filename, &result)?;
+            write_result(&harvest.filename(elapsed.to_string()), &result)?;
         }
-        let resumption_token = get_xpath(&result, "//resumptionToken");
-        match resumption_token {
-            Ok(token_opt) => {
-                match token_opt {
-                    Some(token) => {
-                        fetch_results(&client, &request_base, &token, now, write, &base_filename)?;
-                    },
-                    None => {
-                        println!("done! (no resumption token)");
-                        return Ok(());
-                    }
-                }
+        let last_record_date = get_xpath(&result, "//record[last()]//datestamp")?;
+        match last_record_date {
+            Some(from) => {
+                let new_harvest = Harvest {
+                    from: Some(from.clone()),
+                    ..harvest
+                };
+                return handle_resumption(&client, &result, now, write, new_harvest);
             },
-            Err(e) => {
-                println!("{:?}", e);
-                return Ok(());
-            },
-        }
+            None => println!("no last record date found; not continuing"),
+        };
     } else {
-        println!("Got an error! Need to retry.");
+        match harvest.last_record_date {
+            Some(ref _from) => {
+                return get_records(client.clone(), harvest, write);
+            },
+            None => {
+                println!("Got an error! Need to retry.");
+                println!("{:?}", response.text()?);
+            },
+        }
     }
     Ok(())
 }
