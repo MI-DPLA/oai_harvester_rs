@@ -133,8 +133,7 @@ fn main() -> anyhow::Result<()> {
     let write = args.write;
     let client = Client::builder()
         .timeout(None)
-        .build()
-        .unwrap();
+        .build()?;
 
     match &args.verb {
         Verb::ListMetadataFormats => {
@@ -214,20 +213,22 @@ fn write_result(filepath: &str, result: &str) -> anyhow::Result<()> {
 
 fn get_metadata_formats(client: Client, repository: IriString, write: bool) -> anyhow::Result<()> {
     let request_target = format!("{}?verb=ListMetadataFormats", repository.to_string());
-    let request = client.get(request_target);
-    let result = client.execute(request.build().unwrap()).unwrap().text().unwrap();
+    let request = client.get(request_target).build()?;
+    let result = client.execute(request)?;
+    let result_text = result.text()?;
     if write {
-        write_result("formats.xml", &result)?;
+        write_result("formats.xml", &result_text)?;
     };
     Ok(())
 }
 
 fn get_sets(client: Client, repository: IriString, write: bool) -> anyhow::Result<()> {
     let request_target = format!("{}?verb=ListSets", repository.to_string());
-    let request = client.get(request_target);
-    let result = client.execute(request.build().unwrap()).unwrap().text().unwrap();
+    let request = client.get(request_target).build()?;
+    let result = client.execute(request)?;
+    let result_text = result.text()?;
     if write {
-        write_result("sets.xml", &result)?;
+        write_result("sets.xml", &result_text)?;
     };
     Ok(())
 }
@@ -267,21 +268,22 @@ fn handle_resumption(client: &Client, result_text: &str, now: Instant, write: bo
 
 fn get_records(client: Client, harvest: Harvest, write: bool) -> anyhow::Result<()> {
     let now = Instant::now();
-    let request = client.get(harvest.request_url());
-    let result = client.execute(request.build().unwrap()).unwrap().text().unwrap();
+    let request = client.get(harvest.request_url()).build()?;
+    let result = client.execute(request)?;
+    let result_text = result.text()?;
     // println!("{:?}", result);
     if write {
         let filename = harvest.filename("0".to_string());
-        write_result(&filename, &result)?;
+        write_result(&filename, &result_text)?;
     }
-    let last_record_date = get_xpath(&result, "//record[last()]//datestamp")?;
+    let last_record_date = get_xpath(&result_text, "//record[last()]//datestamp")?;
     match last_record_date {
         Some(from) => {
             let new_harvest = Harvest {
                 from: Some(from.clone()),
                 ..harvest
             };
-            return handle_resumption(&client, &result, now, write, new_harvest);
+            return handle_resumption(&client, &result_text, now, write, new_harvest);
         },
         None => println!("no last record date found; not continuing"),
     };
