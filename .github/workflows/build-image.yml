@@ -26,5 +26,5 @@ jobs:
         with:
           context: .
           push: true
-          tags: 'ghcr.io/MI-DPLA/oai_harvester_rs/oai_harvester_rs:${{ github.sha }}, ghcr.io/MI-DPLA/oai_harvester_rs/oai_harvester_rs:${{ github.ref_name }}, ghcr.io/MI-DPLA/oai_harvester_rs/oai_harvester_rs:latest'
+          tags: 'ghcr.io/mi-dpla/oai_harvester_rs/oai_harvester_rs:${{ github.sha }}, ghcr.io/mi-dpla/oai_harvester_rs/oai_harvester_rs:${{ github.ref_name }}, ghcr.io/mi-dpla/oai_harvester_rs/oai_harvester_rs:latest'
           file: Dockerfile
